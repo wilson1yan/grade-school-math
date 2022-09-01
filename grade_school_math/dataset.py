@@ -21,6 +21,32 @@ def get_examples(split):
     return examples
 
 
+def get_squad():
+    path = os.path.join('data', 'squad', 'train-v2.0.json')
+    squad_dict = json.load(open(path, 'r'))
+
+    contexts, questions, answers = [], [], []
+    for group in squad_dict['data']:
+        for passage in group['paragraphs']:
+            context = passage['context']
+            for qa in passage['qas']:
+                question = qa['question']
+                if 'plausible_answers' in qa.keys():
+                    access = 'plausible_answers'
+                else:
+                    access = 'answers'
+                for answer in qa[access]:
+                    contexts.append(context)
+                    questions.append(question)
+                    answers.append(answer)
+
+    questions = [f'Questions: {q} Context: {c}\n' for q, c in zip(questions, contexts)]
+    answers = [ans['text'] + '<|endoftext|>' for ans in answers]
+    examples = [dict(question=q, answer=a) for q, a in zip(questions, answers)]
+    print(f"{len(examples)} examples")
+    return examples
+
+
 ANS_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 INVALID_ANS = "[invalid]"
 

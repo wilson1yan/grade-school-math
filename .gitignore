@@ -1,0 +1,4 @@
+model_ckpts/
+__pycache__/
+squad/
+*.npz

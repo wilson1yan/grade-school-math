@@ -1,3 +1,4 @@
+import argparse
 import torch as th
 from dataset import get_examples, GSMDataset
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
@@ -8,6 +9,7 @@ from torch.utils.data import DataLoader
 
 
 def main():
+    th.manual_seed(args.id)
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     train_examples = get_examples("train")
     train_dset = GSMDataset(tokenizer, train_examples)
@@ -43,8 +45,12 @@ def main():
             pbar.update(1)
             pbar.set_description(f"train_loss: {loss.item():.5f}")
 
-    model.save_pretrained("model_ckpts/")
+    model.save_pretrained(f"model_ckpts/{args.id}")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--id', type=int, default=0)
+    args = parser.parse_args()
+    print(f'Training model id: {args.id}')
     main()
