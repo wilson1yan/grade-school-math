@@ -7,9 +7,13 @@ import torch as th
 import torch.nn.functional as F
 from dataset import get_examples, get_squad
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from .calculator import use_calculator
 
 
-def sample(model, qn, tokenizer, device, sample_len=100):
+EQUALS_TOKENS = set([28, 796, 47505])
+
+
+def sample(model, qn, tokenizer, device, sample_len=100, calc=True):
     # Samples an answer from the model
     q_len = len(qn)
     for _ in range(sample_len):
@@ -20,13 +24,18 @@ def sample(model, qn, tokenizer, device, sample_len=100):
             **toks, max_length=orig_len + 1, pad_token_id=model.config.eos_token_id
         )
         text = tokenizer.batch_decode(out)[0]
+
+        if calc and out[0, -1].item() in EQUALS_TOKENS:
+            answer = use_calculator(text)
+            if answer is not None:
+                text = text + str(answer) + ">>" 
+        
         qn = text         
         
         if out[0, -1].item() == tokenizer.eos_token_id:
             break
 
     ans = qn[q_len:]
-    import ipdb; ipdb.set_trace()
     return ans
 
 def sample_dataset(model, tokenizer, dset, device, sample_len=100):
