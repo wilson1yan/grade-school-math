@@ -1,6 +1,6 @@
 #!/bin/sh
 
-for i in {0..9}
+for i in 0 1 2 3 4 5 6 7
 do
-    python train_rnd.py -o "model_ckpts_rnd_w$1" -w $1 -i $i
+    CUDA_VISIBLE_DEVICES=$i python train.py -i $i &
 done

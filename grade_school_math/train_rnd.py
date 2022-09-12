@@ -45,17 +45,21 @@ def main():
         for batch in train_loader:
             optim.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
-            logits = F.log_softmax(model(**batch).logits)
-            rnd_logits = F.log_softmax(rnd_prior(**batch).logits)
+            n_microbatches = 16 // args.microbatch_size
+            for i in range(0, 16, args.microbatch_size):
+                microbatch = {k: v[i:i + args.microbatch_size] for k, v in batch.items()}
+                logits = F.log_softmax(model(**microbatch).logits)
+                rnd_logits = F.log_softmax(rnd_prior(**microbatch).logits)
 
-            logits = logits + rnd_logits
-            labels = batch['input_ids']
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:]
-            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.shape[-1]), shift_labels.shape[-1])
-            loss = loss + args.reg_weight * F.mse_loss(logits, rnd_logits)
-            
-            loss.backward()
+                logits = logits + rnd_logits
+                labels = microbatch['input_ids']
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = labels[..., 1:].contiguous()
+                loss = F.cross_entropy(shift_logits.view(-1, shift_logits.shape[-1]), shift_labels.view(-1))
+                loss = loss + args.reg_weight * F.mse_loss(logits, rnd_logits)
+                loss = loss / n_microbatches
+                
+                loss.backward()
             optim.step()
             lr_scheduler.step()
             pbar.update(1)
@@ -69,6 +73,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--id', type=int, default=0)
+    parser.add_argument('-m', '--microbatch_size', type=int, default=16)
     parser.add_argument('-o', '--output_dir', type=str, default='model_ckpts')
     parser.add_argument('-w', '--reg_weight', type=float, default=0.)
     args = parser.parse_args()

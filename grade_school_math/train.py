@@ -39,9 +39,12 @@ def main():
         for batch in train_loader:
             optim.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**batch, labels=batch["input_ids"])
-            loss = outputs[0]
-            loss.backward()
+            n_microbatches = 16 // args.microbatch_size
+            for i in range(0, 16, args.microbatch_size):
+                microbatch = {k: v[i:i + args.microbatch_size] for k, v in batch.items()}
+                outputs = model(**microbatch, labels=microbatch["input_ids"])
+                loss = outputs[0] / n_microbatches
+                loss.backward()
             optim.step()
             lr_scheduler.step()
             pbar.update(1)
@@ -54,6 +57,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--id', type=int, default=0)
+    parser.add_argument('-m', '--microbatch_size', type=int, default=16)
     parser.add_argument('-o', '--output_dir', type=str, default='model_ckpts')
     args = parser.parse_args()
     print(f'Training model id: {args.id}')
