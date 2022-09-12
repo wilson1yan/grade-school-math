@@ -2,10 +2,11 @@ import argparse
 import glob
 import random
 from tqdm import tqdm
+import json
 import numpy as np
 import torch as th
 import torch.nn.functional as F
-from dataset import get_examples, get_squad
+from dataset import get_examples, get_squad, is_correct
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
 from calculator import use_calculator
 
@@ -21,7 +22,8 @@ def sample(model, qn, tokenizer, device, sample_len=100, calc=True):
         orig_len = toks['input_ids'].shape[1]
 
         out = model.generate(
-            **toks, max_length=orig_len + 1, pad_token_id=model.config.eos_token_id
+            **toks, max_length=orig_len + 1, pad_token_id=model.config.eos_token_id,
+            do_sample=True
         )
         text = tokenizer.batch_decode(out)[0]
 
@@ -37,14 +39,17 @@ def sample(model, qn, tokenizer, device, sample_len=100, calc=True):
     ans = qn[q_len:]
     return ans
 
-def sample_dataset(model, tokenizer, dset, device, sample_len=100):
-    info = []
+def sample_dataset(model, tokenizer, dset, device, sample_len=100, calc=True):
+    answers = []
     for ex in dset:
         qn = ex['question']
-        ans = sample(model, qn, tokenizer, device, sample_len)
-        likeli = eval_likelihood(model, tokenizer, qn, ans, device)
-        info.append((ans, likeli))
-    return info
+        ans = sample(model, qn, tokenizer, device, sample_len, calc=calc)
+        if calc:
+            c = is_correct(ans, ex)
+        else:
+            c = False
+        answers.append((ans, c))
+    return answers
 
     
 def eval_likelihood(model, tokenizer, qn, ans, device):
@@ -55,7 +60,7 @@ def eval_likelihood(model, tokenizer, qn, ans, device):
     tgts = th.cat([th.full_like(qn, -100), ans], dim=1)
 
     likelihood = -model(toks, labels=tgts).loss.item()# * ans.shape[1]
-    return likelihood
+    return np.exp(likelihood)
 
 
 def get_mode_answer(answers):
@@ -74,6 +79,7 @@ def main():
     model_paths = glob.glob('model_ckpts/*')
     models = [GPT2LMHeadModel.from_pretrained(path).eval().cpu()
               for path in model_paths]         
+    n_models = len(models)
     print("Models Loaded")
 
     th.set_grad_enabled(False)
@@ -88,42 +94,37 @@ def main():
         raise ValueError(f'Invalid dataset: {args.dataset}')
     examples = examples[:args.n]
 
-    sample_len = 100
+    sample_len = 400
 
-    samples = []
-    for model in tqdm(models):
+    answers = [None] * n_models
+    for i, model in enumerate(tqdm(models)):
         model.to(device)
-        info = sample_dataset(model, tokenizer, examples, device, sample_len)
-        samples.append(info)
+        ans = sample_dataset(model, tokenizer, examples, device, sample_len, calc=args.dataset != 'squad')
+        answers[i] = ans
         model.cpu()
 
-    samples = list(zip(*samples)) 
-    mode_answers = [get_mode_answer(s) for s in samples]
+    json.dump(answers, open(f'answers_{args.dataset}.json', 'w'))
 
-    assert len(mode_answers) == len(examples)
-    likelihoods = []
-    for model in tqdm(models):
-        model.to(device)
-        liks = [eval_likelihood(model, tokenizer, ex['question'], ans, device)
-                for ex, ans in zip(examples, mode_answers)]
-        likelihoods.append(liks)
-        model.cpu()
-    likelihoods = np.array(likelihoods)
-    probs = np.exp(likelihoods)
-    mean, std = probs.mean(axis=0), probs.std(axis=0)
-    np.savez(f'{args.dataset}_stats.npz', mean=mean, std=std)
+    likelihoods = np.zeros((args.n, n_models, n_models), dtype=np.float64)
+    pbar = tqdm(total=n_models ** 2 * args.n)
+    for i in range(n_models): # prediction of ith model
+        for j in range(n_models): # applied to likelihood of jth model
+            model = models[j].to(device)
+            for k in range(args.n): # data point k
+                ex = examples[k]
+                ans = answers[i][k][0]
+                likelihood = eval_likelihood(model, tokenizer, ex['question'], ans, device)
+                likelihoods[k, i, j] = likelihood
+                pbar.update(1)
+            model.cpu()
 
-    print(mean[:20])
-    print(std[:20])
-    mean, std = mean.mean(), std.mean()
-    print(f'{args.dataset}: {mean} +/- {std}')
-
+    np.save(f'ensemble_matrices_{args.dataset}.npy', likelihoods)
     print('Done')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--dataset', type=str, default='train')
+    parser.add_argument('-d', '--dataset', type=str, default='test')
     parser.add_argument('-n', '--n', type=int, default=100)
     args = parser.parse_args()
     main()
